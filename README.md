@@ -23,10 +23,15 @@ Optional extras: `pip install -e ".[router]"` (litellm), `.[semantic]`
 
 - `GET  /health` — liveness + version
 - `GET  /ready` — readiness
+- `POST /auth/register` — create tenant + admin user (201)
+- `POST /auth/token` — OAuth2 form login → JWT bearer token (24h)
+- `GET  /auth/me` — current identity (`sub`, `tenant_id`, `role`)
+- `POST /auth/users` — admin-only: invite a member to the tenant
 - `GET  /agents` — registered blueprints (name, tier, tools, tags)
 - `GET  /agents/{name}` — one blueprint's details
-- `POST /chat` — `{"message": "...", "agent": "Research Specialist"?}` →
-  `{reply, intent, model}`
+- `POST /chat` — **auth required**; `{"message": "...", "agent": "...?"}` →
+  `{reply, intent, model}`; metered per plan (HTTP 429 over allowance)
+- `GET  /chat/usage` — today's request count vs plan limit
 - `GET  /billing/plans` — pricing tiers (Free / Pro $29 / Enterprise $299)
 - `POST /billing/checkout/{plan_id}` — Stripe checkout; returns **503**
   until `STRIPE_API_KEY` is set (dev/CI-friendly)

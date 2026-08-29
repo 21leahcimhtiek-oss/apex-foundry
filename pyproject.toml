@@ -19,6 +19,7 @@ dependencies = [
     "httpx>=0.27",
     "redis>=5.0",
     "openai>=1.30",
+    "pyjwt>=2.8",
 ]
 
 [project.optional-dependencies]

@@ -6,7 +6,7 @@ from pathlib import Path
 
 from fastapi import FastAPI
 
-from api.routers import agents, billing, chat, health
+from api.routers import agents, auth, billing, chat, health
 from core.agents.factory.blueprint import registry
 
 BLUEPRINTS_DIR = Path(__file__).resolve().parent.parent / "blueprints"
@@ -26,6 +26,7 @@ def create_app() -> FastAPI:
         version="0.1.0",
     )
     app.include_router(health.router)
+    app.include_router(auth.router)
     app.include_router(agents.router)
     app.include_router(chat.router)
     app.include_router(billing.router)

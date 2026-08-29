@@ -28,16 +28,16 @@ operation, scale, and enterprise controls.
 
 - [x] Plan catalog implemented (`/billing/plans`)
 - [x] Checkout endpoint stubbed with feature-flag (503 without key)
+- [x] Auth + multi-tenancy in API (JWT, tenants, roles, per-tenant metering)
 - [ ] Stripe account + products/prices created (Free/Pro/Enterprise)
 - [ ] `STRIPE_API_KEY` set in prod env → checkout goes live
 - [ ] Webhook handler for `checkout.session.completed` (gate usage limits)
-- [ ] Auth + multi-tenancy in API (hard prerequisite — do not sell seats
-      before this exists)
-- [ ] Usage metering middleware (req/day counters per tier)
+- [ ] Plan changes wired into tenant records (upgrade/downgrade flow)
 - [ ] Landing page + terms/privacy pages
 - [ ] Launch: Show HN + r/LocalLLaMA + X build-in-public thread
 
 ## Sequencing rule
 
-Do not enable paid checkout until auth/multi-tenancy ships. Free tier can
-launch immediately after usage metering.
+Free tier can launch once the Stripe webhook gates plan limits. Paid
+checkout can be enabled immediately after the Stripe account exists —
+the auth/multi-tenancy prerequisite is satisfied.

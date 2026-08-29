@@ -30,7 +30,19 @@ def test_get_agent_404() -> None:
 
 
 def test_chat_unknown_agent_404() -> None:
-    resp = make_client().post("/chat", json={"message": "hi", "agent": "ghost"})
+    client = make_client()
+    client.post(
+        "/auth/register",
+        json={"tenant_name": "T", "email": "a@b.test", "password": "supersecret1"},
+    )
+    tok = client.post(
+        "/auth/token", data={"username": "a@b.test", "password": "supersecret1"}
+    ).json()["access_token"]
+    resp = client.post(
+        "/chat",
+        json={"message": "hi", "agent": "ghost"},
+        headers={"Authorization": f"Bearer {tok}"},
+    )
     assert resp.status_code == 404
 
 
