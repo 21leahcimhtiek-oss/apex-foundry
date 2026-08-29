@@ -24,7 +24,10 @@ b = r.json()
 if r.status_code == 200:
     print("checkout_url:", b.get("checkout_url", "")[:60])
     print("session_id:", b.get("session_id", "")[:24])
-    print("mode: LIVE — a real Stripe Checkout session was created")
+    print("mode: LIVE - a real Stripe Checkout session was created")
+    sid = b.get("session_id", "")
+    v = c.post("/billing/verify/" + sid, headers=h)
+    print("verify status:", v.status_code, "| body:", v.json())
 else:
     print("detail:", str(b.get("detail", ""))[:200])
 

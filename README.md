@@ -33,6 +33,9 @@ Optional extras: `pip install -e ".[router]"` (litellm), `.[semantic]`
   `{reply, intent, model}`; metered per plan (HTTP 429 over allowance)
 - `GET  /chat/usage` — today's request count vs plan limit
 - `GET  /billing/plans` — pricing tiers (Free / Pro $29 / Enterprise $299)
+- `POST /billing/verify/{session_id}` — webhook-free activation: polls
+  Stripe, applies the plan to the caller's tenant when paid (403 for
+  foreign sessions)
 - `POST /billing/checkout/{plan_id}` — Stripe checkout; returns **503**
   until `STRIPE_API_KEY` is set (dev/CI-friendly)
 

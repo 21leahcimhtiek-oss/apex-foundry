@@ -84,6 +84,19 @@ class _FakeStripe:
 
             return S()
 
+        @staticmethod
+        def retrieve(session_id: str) -> object:
+            meta = _FakeStripe.last_kwargs.get("metadata", {})
+
+            class S:
+                id = session_id
+                status = "complete"
+                payment_status = "paid"
+                client_reference_id = meta.get("tenant_id")
+                metadata = {"plan_id": meta.get("plan_id", "pro"), "tenant_id": meta.get("tenant_id")}
+
+            return S()
+
     class checkout:
         pass
 
@@ -162,6 +175,68 @@ def test_checkout_success_with_fake_stripe(
     assert kwargs["metadata"]["plan_id"] == "pro"
     assert kwargs["metadata"]["tenant_id"] == kwargs["client_reference_id"]
     assert kwargs["line_items"][0]["price_data"]["unit_amount"] == 2900
+
+
+def test_verify_activates_plan_without_webhook(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("STRIPE_API_KEY", "sk_test_dummy")
+    monkeypatch.setitem(sys.modules, "stripe", _FakeStripe)
+    client = make_client()
+    tok = _register_and_login(client, "verify@t.test")
+    headers = {"Authorization": f"Bearer {tok}"}
+    assert _tenant_plan(client, headers) == "free"
+
+    client.post("/billing/checkout/pro", headers=headers)
+    resp = client.post("/billing/verify/cs_test_123", headers=headers)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["applied"] is True
+    assert body["plan"] == "pro"
+    assert _tenant_plan(client, headers) == "pro"
+
+
+def test_verify_rejects_foreign_session(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("STRIPE_API_KEY", "sk_test_dummy")
+    monkeypatch.setitem(sys.modules, "stripe", _FakeStripe)
+    client = make_client()
+    tok = _register_and_login(client, "verify2@t.test")
+    headers = {"Authorization": f"Bearer {tok}"}
+    client.post("/billing/checkout/pro", headers=headers)
+
+    other = make_client()
+    other_tok = _register_and_login(other, "verify3@t.test")
+    resp = other.post(
+        "/billing/verify/cs_test_123",
+        headers={"Authorization": f"Bearer {other_tok}"},
+    )
+    assert resp.status_code == 403
+
+
+def test_verify_unpaid_not_applied(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("STRIPE_API_KEY", "sk_test_dummy")
+    monkeypatch.setitem(sys.modules, "stripe", _FakeStripe)
+    client = make_client()
+    tok = _register_and_login(client, "verify4@t.test")
+    headers = {"Authorization": f"Bearer {tok}"}
+    client.post("/billing/checkout/pro", headers=headers)
+
+    _FakeStripe.last_kwargs["metadata"]["plan_id"] = "pro"
+    # simulate unpaid: temporarily patch payment_status
+    orig_retrieve = _FakeStripe.Session.retrieve
+
+    def unpaid_retrieve(session_id: str) -> object:
+        s = orig_retrieve(session_id)
+        s.payment_status = "unpaid"
+        s.status = "open"
+        return s
+
+    _FakeStripe.Session.retrieve = staticmethod(unpaid_retrieve)
+    resp = client.post("/billing/verify/cs_test_123", headers=headers)
+    _FakeStripe.Session.retrieve = staticmethod(orig_retrieve)
+    assert resp.status_code == 200
+    assert resp.json()["applied"] is False
+    assert _tenant_plan(client, headers) == "free"
 
 
 def test_webhook_dev_mode_unverified(monkeypatch: pytest.MonkeyPatch) -> None:

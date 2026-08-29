@@ -31,8 +31,9 @@ operation, scale, and enterprise controls.
 - [x] Auth + multi-tenancy in API (JWT, tenants, roles, per-tenant metering)
 - [x] Live Stripe key configured — **live checkout verified** (`cs_live_*`
       session created end-to-end via `scripts/smoke_stripe.py`)
-- [ ] Webhook secret (`STRIPE_WEBHOOK_SECRET`) from Stripe dashboard →
-      enables signature verification + plan auto-upgrade on payment
+- [x] Webhook-free plan activation — `POST /billing/verify/{session_id}`
+      polls Stripe and applies the plan on payment (tenant-ownership
+      checked, 403 for foreign sessions). No Stripe webhook config needed.
 - [ ] Optional: create Stripe Prices and set `STRIPE_*_PRICE_ID` env vars
       (inline price_data works without them)
 - [ ] Landing page + terms/privacy pages
@@ -40,5 +41,7 @@ operation, scale, and enterprise controls.
 
 ## Sequencing rule
 
-Paid checkout is LIVE. Deploy behind a public URL and add the webhook
-endpoint in the Stripe dashboard to complete the plan-upgrade loop.
+Paid checkout is LIVE and self-verifying: point the success page at
+`/billing/success?session_id={CHECKOUT_SESSION_ID}` and have it call
+`POST /billing/verify/{session_id}` — the tenant's plan (and usage
+limits) update immediately, no webhooks.

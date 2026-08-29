@@ -101,7 +101,8 @@ def _create_checkout_session(plan_id: str, plan: Plan, user: dict) -> dict:
             mode="subscription",
             line_items=line_items,
             success_url=os.getenv(
-                "STRIPE_SUCCESS_URL", "https://apex-foundry.dev/billing/success"
+                "STRIPE_SUCCESS_URL",
+                "https://apex-foundry.dev/billing/success?session_id={CHECKOUT_SESSION_ID}",
             ),
             cancel_url=os.getenv(
                 "STRIPE_CANCEL_URL", "https://apex-foundry.dev/billing/cancel"
@@ -112,6 +113,58 @@ def _create_checkout_session(plan_id: str, plan: Plan, user: dict) -> dict:
     except Exception as exc:  # stripe.APIError etc.
         raise HTTPException(status_code=502, detail=f"Stripe error: {exc}") from exc
     return {"checkout_url": session.url, "session_id": session.id}
+
+
+@router.post("/verify/{session_id}")
+def verify(session_id: str, user: dict = Depends(get_current_user)) -> dict:
+    """Webhook-free plan activation.
+
+    Polls Stripe for the checkout session's status; if paid/completed and
+    the session belongs to this tenant, the plan is applied immediately.
+    Call this from the success page after payment.
+    """
+    if not os.getenv("STRIPE_API_KEY"):
+        raise HTTPException(status_code=503, detail="Billing not configured")
+    import stripe
+
+    stripe.api_key = os.environ["STRIPE_API_KEY"]
+    try:
+        session = stripe.checkout.Session.retrieve(session_id)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Stripe error: {exc}") from exc
+
+    # StripeObject blocks .get()/iteration — use to_dict() when available.
+    to_dict = getattr(session, "to_dict", None)
+    if callable(to_dict):
+        data = to_dict()
+    else:
+        data = {
+            field: getattr(session, field, None)
+            for field in ("status", "payment_status", "client_reference_id", "metadata")
+        }
+    metadata = data.get("metadata") or {}
+    tenant_id = metadata.get("tenant_id") or data.get("client_reference_id")
+    if tenant_id != user["tenant_id"]:
+        raise HTTPException(status_code=403, detail="Session belongs to another tenant")
+
+    paid = data.get("payment_status") == "paid" or (
+        data.get("status") == "complete" and data.get("payment_status") != "unpaid"
+    )
+    if not paid:
+        return {
+            "session_id": session_id,
+            "status": data.get("payment_status", "unknown"),
+            "applied": False,
+        }
+
+    plan_id = metadata.get("plan_id", "pro")
+    tenant = get_service().set_plan(user["tenant_id"], plan_id)
+    return {
+        "session_id": session_id,
+        "status": "paid",
+        "applied": True,
+        "plan": tenant["plan"],
+    }
 
 
 @router.post("/webhook")
