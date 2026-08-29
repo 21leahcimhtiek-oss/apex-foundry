@@ -24,12 +24,16 @@ dependencies = [
 [project.optional-dependencies]
 router = ["litellm>=1.40"]
 semantic = ["chromadb>=0.5"]
+billing = ["stripe>=9.0"]
 dev = [
     "ruff>=0.4",
     "mypy>=1.9",
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
 ]
+
+[project.scripts]
+apex-foundry = "api.main:run"
 
 [tool.ruff]
 line-length = 88
