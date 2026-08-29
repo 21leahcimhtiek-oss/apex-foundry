@@ -2,9 +2,26 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from fastapi import FastAPI
+
+
+def _load_env() -> None:
+    """Minimal .env loader (no dependency). Does not override real env."""
+    env_file = Path(__file__).resolve().parent.parent / ".env"
+    if not env_file.is_file():
+        return
+    for line in env_file.read_text(encoding="utf-8", errors="replace").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        os.environ.setdefault(key.strip(), value)
+
+
+_load_env()
 
 from api.routers import agents, auth, billing, chat, health
 from core.agents.factory.blueprint import registry

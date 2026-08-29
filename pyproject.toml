@@ -25,7 +25,7 @@ dependencies = [
 [project.optional-dependencies]
 router = ["litellm>=1.40"]
 semantic = ["chromadb>=0.5"]
-billing = ["stripe>=9.0"]
+billing = ["stripe>=10.0"]
 dev = [
     "ruff>=0.4",
     "mypy>=1.9",

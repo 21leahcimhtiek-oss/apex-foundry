@@ -1,7 +1,9 @@
-"""Billing router — plan catalog for the open-core monetization model.
+"""Billing router — Stripe Checkout + plan-sync webhook.
 
-Stripe integration is behind STRIPE_API_KEY; without it the catalog is
-read-only so local dev and CI work with zero external services.
+Checkout requires STRIPE_API_KEY (loaded from .env); without it the
+catalog is read-only (503) so dev/CI work with zero external services.
+When STRIPE_PRO_PRICE_ID / STRIPE_ENTERPRISE_PRICE_ID exist, real Stripe
+Prices are used; otherwise inline price_data is sent.
 """
 
 from __future__ import annotations
@@ -9,8 +11,9 @@ from __future__ import annotations
 import json
 import os
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 
+from api.routers.auth import get_current_user, get_service
 from api.schemas.models import Plan
 
 router = APIRouter(prefix="/billing", tags=["billing"])
@@ -39,23 +42,33 @@ def list_plans() -> list[Plan]:
     return list(PLANS.values())
 
 
+PRICE_ID_VARS = {"pro": "STRIPE_PRO_PRICE_ID", "enterprise": "STRIPE_ENTERPRISE_PRICE_ID"}
+
+
 @router.post("/checkout/{plan_id}")
-def checkout(plan_id: str) -> dict:
+def checkout(plan_id: str, user: dict = Depends(get_current_user)) -> dict:
     plan = PLANS.get(plan_id)
     if plan is None:
         raise HTTPException(status_code=404, detail=f"Unknown plan: {plan_id}")
+    if plan_id == "free":
+        # Free needs no payment session; downgrade/keep is instant.
+        get_service().set_plan(user["tenant_id"], "free")
+        return {"plan": "free", "status": "active"}
     if not os.getenv("STRIPE_API_KEY"):
         raise HTTPException(
             status_code=503,
             detail="Billing not configured: set STRIPE_API_KEY to enable checkout",
         )
-    return {"plan": plan_id, "status": "checkout_session_created", **_create_checkout_session(plan_id, plan)}
+    body = _create_checkout_session(plan_id, plan, user)
+    return {"plan": plan_id, "status": "checkout_session_created", **body}
 
 
-def _create_checkout_session(plan_id: str, plan: Plan) -> dict:
+def _create_checkout_session(plan_id: str, plan: Plan, user: dict) -> dict:
     """Create a real Stripe Checkout Session (lazy stripe import).
 
-    Runs only when STRIPE_API_KEY is set; keeps dev/CI free of the SDK.
+    Uses pre-created Stripe Prices when STRIPE_<PLAN>_PRICE_ID is set;
+    falls back to inline price_data. The tenant identity rides in
+    metadata so the webhook can upgrade the right tenant.
     """
     try:
         import stripe  # type: ignore[import-untyped]
@@ -66,27 +79,35 @@ def _create_checkout_session(plan_id: str, plan: Plan) -> dict:
         ) from exc
 
     stripe.api_key = os.environ["STRIPE_API_KEY"]
+    price_var = PRICE_ID_VARS.get(plan_id)
+    if price_var and os.getenv(price_var):
+        line_items: list[dict] = [
+            {"quantity": 1, "price": os.environ[price_var]},
+        ]
+    else:
+        line_items = [
+            {
+                "quantity": 1,
+                "price_data": {
+                    "currency": "usd",
+                    "unit_amount": plan.price_monthly * 100,
+                    "recurring": {"interval": "month"},
+                    "product_data": {"name": f"Apex Foundry {plan.name}"},
+                },
+            }
+        ]
     try:
         session = stripe.checkout.Session.create(
             mode="subscription",
-            line_items=[
-                {
-                    "quantity": 1,
-                    "price_data": {
-                        "currency": "usd",
-                        "unit_amount": plan.price_monthly * 100,
-                        "recurring": {"interval": "month"},
-                        "product_data": {"name": f"Apex Foundry {plan.name}"},
-                    },
-                }
-            ],
+            line_items=line_items,
             success_url=os.getenv(
                 "STRIPE_SUCCESS_URL", "https://apex-foundry.dev/billing/success"
             ),
             cancel_url=os.getenv(
                 "STRIPE_CANCEL_URL", "https://apex-foundry.dev/billing/cancel"
             ),
-            metadata={"plan_id": plan_id},
+            client_reference_id=user["tenant_id"],
+            metadata={"plan_id": plan_id, "tenant_id": user["tenant_id"]},
         )
     except Exception as exc:  # stripe.APIError etc.
         raise HTTPException(status_code=502, detail=f"Stripe error: {exc}") from exc
@@ -117,4 +138,17 @@ async def webhook(request: Request) -> dict:
         except json.JSONDecodeError as exc:
             raise HTTPException(status_code=400, detail="Invalid JSON payload") from exc
 
-    return {"received": True, "event_type": event.get("type") if isinstance(event, dict) else event["type"]}
+    event_type = event.get("type") if isinstance(event, dict) else event["type"]
+    applied: dict | None = None
+    if event_type == "checkout.session.completed":
+        data = event.get("data", {}).get("object", {})
+        metadata = data.get("metadata", {})
+        tenant_id = metadata.get("tenant_id") or data.get("client_reference_id")
+        plan_id = metadata.get("plan_id")
+        if tenant_id and plan_id:
+            try:
+                get_service().set_plan(tenant_id, plan_id)
+                applied = {"tenant_id": tenant_id, "plan": plan_id}
+            except KeyError:
+                applied = {"error": "tenant not found", "tenant_id": tenant_id}
+    return {"received": True, "event_type": event_type, "applied": applied}

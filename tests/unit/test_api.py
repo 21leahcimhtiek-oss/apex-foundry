@@ -53,12 +53,14 @@ def test_billing_plans() -> None:
     assert prices == {"Free": 0, "Pro": 29, "Enterprise": 299}
 
 
-def test_checkout_unconfigured_503() -> None:
-    assert make_client().post("/billing/checkout/pro").status_code == 503
-
-
-def test_checkout_unknown_plan_404() -> None:
-    assert make_client().post("/billing/checkout/nope").status_code == 404
+def _register_and_login(client: TestClient, email: str) -> str:
+    client.post(
+        "/auth/register",
+        json={"tenant_name": "T", "email": email, "password": "supersecret1"},
+    )
+    return client.post(
+        "/auth/token", data={"username": email, "password": "supersecret1"}
+    ).json()["access_token"]
 
 
 def _unconfigured(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -68,8 +70,6 @@ def _unconfigured(monkeypatch: pytest.MonkeyPatch) -> None:
 
 class _FakeStripe:
     """Minimal fake of the stripe module for tests (no SDK needed)."""
-
-    last_kwargs: dict = {}
 
     last_kwargs: dict = {}
 
@@ -87,33 +87,81 @@ class _FakeStripe:
     class checkout:
         pass
 
+
 _FakeStripe.checkout.Session = _FakeStripe.Session
+
+
+def test_checkout_unauthenticated_401(monkeypatch: pytest.MonkeyPatch) -> None:
+    _unconfigured(monkeypatch)
+    assert make_client().post("/billing/checkout/pro").status_code == 401
+
+
+def test_checkout_unconfigured_503(monkeypatch: pytest.MonkeyPatch) -> None:
+    _unconfigured(monkeypatch)
+    client = make_client()
+    tok = _register_and_login(client, "bill1@t.test")
+    resp = client.post(
+        "/billing/checkout/pro", headers={"Authorization": f"Bearer {tok}"}
+    )
+    assert resp.status_code == 503
+
+
+def test_checkout_unknown_plan_404(monkeypatch: pytest.MonkeyPatch) -> None:
+    _unconfigured(monkeypatch)
+    client = make_client()
+    tok = _register_and_login(client, "bill2@t.test")
+    resp = client.post(
+        "/billing/checkout/nope", headers={"Authorization": f"Bearer {tok}"}
+    )
+    assert resp.status_code == 404
+
+
+def test_checkout_free_downgrades_instantly(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _unconfigured(monkeypatch)
+    client = make_client()
+    tok = _register_and_login(client, "bill3@t.test")
+    headers = {"Authorization": f"Bearer {tok}"}
+    client.post("/billing/webhook", json={
+        "type": "checkout.session.completed",
+        "data": {"object": {"metadata": {"tenant_id": client.get(
+            "/auth/me", headers=headers).json()["tenant_id"], "plan_id": "pro"}}},
+    })
+    resp = client.post("/billing/checkout/free", headers=headers)
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "active"
+    tenant = client.get("/auth/me", headers=headers).json()
+    assert _tenant_plan(client, headers) == "free"
+
+
+def _tenant_plan(client: TestClient, headers: dict) -> str:
+    from api.routers.auth import get_service
+
+    me = client.get("/auth/me", headers=headers).json()
+    return get_service().get_tenant(me["tenant_id"])["plan"]
 
 
 def test_checkout_success_with_fake_stripe(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("STRIPE_API_KEY", "sk_test_dummy")
+    monkeypatch.delenv("STRIPE_PRO_PRICE_ID", raising=False)
     monkeypatch.setitem(sys.modules, "stripe", _FakeStripe)
-    resp = make_client().post("/billing/checkout/pro")
+    client = make_client()
+    tok = _register_and_login(client, "bill4@t.test")
+    resp = client.post(
+        "/billing/checkout/pro", headers={"Authorization": f"Bearer {tok}"}
+    )
     assert resp.status_code == 200
     body = resp.json()
     assert body["checkout_url"].startswith("https://checkout.stripe.com")
     assert body["session_id"] == "cs_test_123"
     kwargs = _FakeStripe.last_kwargs
     assert kwargs["mode"] == "subscription"
-    assert kwargs["metadata"] == {"plan_id": "pro"}
+    assert kwargs["metadata"]["plan_id"] == "pro"
+    assert kwargs["metadata"]["tenant_id"] == kwargs["client_reference_id"]
     assert kwargs["line_items"][0]["price_data"]["unit_amount"] == 2900
-
-
-def test_checkout_free_plan_no_stripe_needed(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _unconfigured(monkeypatch)
-    # Unknown plan still 404 before config check is irrelevant; free plan works via stripe too.
-    resp = make_client().post("/billing/checkout/free")
-    # unconfigured -> 503 even for free (checkout requires Stripe session)
-    assert resp.status_code == 503
 
 
 def test_webhook_dev_mode_unverified(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -122,7 +170,26 @@ def test_webhook_dev_mode_unverified(monkeypatch: pytest.MonkeyPatch) -> None:
         "/billing/webhook", json={"type": "checkout.session.completed"}
     )
     assert resp.status_code == 200
-    assert resp.json() == {"received": True, "event_type": "checkout.session.completed"}
+    body = resp.json()
+    assert body["received"] is True
+    assert body["event_type"] == "checkout.session.completed"
+
+
+def test_webhook_upgrades_tenant_plan(monkeypatch: pytest.MonkeyPatch) -> None:
+    _unconfigured(monkeypatch)
+    client = make_client()
+    tok = _register_and_login(client, "upgrade@t.test")
+    headers = {"Authorization": f"Bearer {tok}"}
+    tenant_id = client.get("/auth/me", headers=headers).json()["tenant_id"]
+    assert _tenant_plan(client, headers) == "free"
+
+    resp = client.post("/billing/webhook", json={
+        "type": "checkout.session.completed",
+        "data": {"object": {"metadata": {"tenant_id": tenant_id, "plan_id": "pro"}}},
+    })
+    assert resp.status_code == 200
+    assert resp.json()["applied"] == {"tenant_id": tenant_id, "plan": "pro"}
+    assert _tenant_plan(client, headers) == "pro"
 
 
 def test_webhook_invalid_json_400(monkeypatch: pytest.MonkeyPatch) -> None:

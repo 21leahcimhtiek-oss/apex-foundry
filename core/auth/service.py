@@ -121,6 +121,18 @@ class AuthService:
         return jwt.decode(token, self._secret(), algorithms=[JWT_ALG])
 
     # ── tenancy + metering ───────────────────────────────────────
+    def set_plan(self, tenant_id: str, plan: str) -> dict[str, Any]:
+        """Set a tenant's plan (called by the billing webhook / downgrade)."""
+        if plan not in PLAN_LIMITS:
+            raise ValueError(f"Unknown plan: {plan}")
+        directory = self._directory()
+        tenant = directory["tenants"].get(tenant_id)
+        if tenant is None:
+            raise KeyError("tenant not found")
+        tenant["plan"] = plan
+        self._save(directory)
+        return tenant
+
     def get_tenant(self, tenant_id: str) -> dict[str, Any]:
         tenant = self._directory()["tenants"].get(tenant_id)
         if tenant is None:
