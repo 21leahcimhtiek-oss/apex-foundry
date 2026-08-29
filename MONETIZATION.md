@@ -29,15 +29,16 @@ operation, scale, and enterprise controls.
 - [x] Plan catalog implemented (`/billing/plans`)
 - [x] Checkout endpoint stubbed with feature-flag (503 without key)
 - [x] Auth + multi-tenancy in API (JWT, tenants, roles, per-tenant metering)
-- [ ] Stripe account + products/prices created (Free/Pro/Enterprise)
-- [ ] `STRIPE_API_KEY` set in prod env → checkout goes live
-- [ ] Webhook handler for `checkout.session.completed` (gate usage limits)
-- [ ] Plan changes wired into tenant records (upgrade/downgrade flow)
+- [x] Live Stripe key configured — **live checkout verified** (`cs_live_*`
+      session created end-to-end via `scripts/smoke_stripe.py`)
+- [ ] Webhook secret (`STRIPE_WEBHOOK_SECRET`) from Stripe dashboard →
+      enables signature verification + plan auto-upgrade on payment
+- [ ] Optional: create Stripe Prices and set `STRIPE_*_PRICE_ID` env vars
+      (inline price_data works without them)
 - [ ] Landing page + terms/privacy pages
 - [ ] Launch: Show HN + r/LocalLLaMA + X build-in-public thread
 
 ## Sequencing rule
 
-Free tier can launch once the Stripe webhook gates plan limits. Paid
-checkout can be enabled immediately after the Stripe account exists —
-the auth/multi-tenancy prerequisite is satisfied.
+Paid checkout is LIVE. Deploy behind a public URL and add the webhook
+endpoint in the Stripe dashboard to complete the plan-upgrade loop.
