@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "apex-foundry"
+version = "0.1.0"
+description = "Apex Foundry — greenfield agentic platform (Path B)"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Aurora Rayes LLC", email = "raye@apex-foundry.dev" }]
+
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "pydantic>=2.7",
+    "PyYAML>=6.0",
+    "httpx>=0.27",
+    "redis>=5.0",
+    "openai>=1.30",
+]
+
+[project.optional-dependencies]
+router = ["litellm>=1.40"]
+semantic = ["chromadb>=0.5"]
+dev = [
+    "ruff>=0.4",
+    "mypy>=1.9",
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+]
+
+[tool.ruff]
+line-length = 88
+select = ["E", "F", "I", "N", "W", "UP"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"

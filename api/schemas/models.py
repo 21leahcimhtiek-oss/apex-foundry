@@ -1,0 +1,30 @@
+"""Pydantic schemas for the Apex Foundry API."""
+
+from __future__ import annotations
+
+from pydantic import BaseModel, Field
+
+
+class ChatRequest(BaseModel):
+    message: str = Field(min_length=1, max_length=32_000)
+    agent: str | None = None
+    intent: str | None = None
+
+
+class ChatResponse(BaseModel):
+    reply: str
+    intent: str
+    model: str
+
+
+class AgentInfo(BaseModel):
+    name: str
+    tier: int
+    tools: list[str] = []
+    tags: list[str] = []
+
+
+class Plan(BaseModel):
+    name: str
+    price_monthly: int
+    features: list[str]
