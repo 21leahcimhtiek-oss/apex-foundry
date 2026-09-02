@@ -340,13 +340,14 @@ def test_intent_router_custom_binding(tmp_path, monkeypatch: pytest.MonkeyPatch)
 
     from api.routers.autonomy import get_router
 
-    get_router().register("test.echo", lambda p: {"echo": p.get("msg", "")})
+    get_router().register("test.echo", lambda p, ctx: {"echo": p.get("msg", "")})
     body = client.post(
         "/v1/autonomy/dispatch",
         json={"agent": "x", "intent": "test.echo", "payload": {"msg": "hi"}},
         headers=headers,
     ).json()
-    assert body["status"] == "ok" and body["result"] == {"echo": "hi"}
+    assert body["status"] == "ok", body["result"]
+    assert body["result"] == {"echo": "hi"}
 
     # Handler that raises → error event.
     def boom(_p: dict) -> None:
