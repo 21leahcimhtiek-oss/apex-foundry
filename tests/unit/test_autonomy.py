@@ -233,3 +233,48 @@ def test_autonomy_metrics(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
         "/v1/autonomy/metrics", headers={"Authorization": f"Bearer {tok_b}"}
     ).json()
     assert m3["records_in_vault"] == 0 and m3["recall_queries"] == 0
+
+
+def test_scheduler_run_once_prunes_all_tenants(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from core.autonomy.scheduler import MaintenanceScheduler
+    from api.routers.memory import get_vault
+
+    client = _autonomy_client(tmp_path, monkeypatch)
+    tok = _register_and_login(client, "sched@t.test")
+    headers = {"Authorization": f"Bearer {tok}"}
+    rec = client.post(
+        "/v1/autonomy/tick",
+        json={"agent": "old", "goal": "legacy goal", "outcome": "stale"},
+        headers=headers,
+    ).json()["recorded"]
+
+    # Backdate the record via the app's own vault connection.
+    vault = get_vault()
+    vault._conn.execute(
+        "UPDATE memories SET created_at = created_at - 999999 WHERE memory_id = ?",
+        (rec["memory_id"],),
+    )
+    vault._conn.commit()
+
+    # Scheduler over the real tenant directory, aggressive window.
+    from api.routers.autonomy import get_engine
+    from api.routers.auth import get_service
+
+    sched = MaintenanceScheduler(
+        get_engine(),
+        [t["tenant_id"] for t in get_service().list_tenants()],
+        max_age_hours=1,
+        keep_recent=0,
+        interval_hours=1,
+    )
+    report = sched.run_once()
+    assert any(r.get("pruned") == 1 for r in report)
+    ids = [m["memory_id"] for m in client.get("/v1/memory", headers=headers).json()]
+    assert rec["memory_id"] not in ids
+
+    # App lifespan wires the scheduler and survives startup/shutdown.
+    with TestClient(create_app()) as c:
+        assert c.app.state.autonomy_scheduler is not None
+        assert c.app.state.autonomy_scheduler.interval_hours >= 1 / 60

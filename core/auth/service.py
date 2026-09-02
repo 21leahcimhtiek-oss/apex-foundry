@@ -139,6 +139,10 @@ class AuthService:
             raise KeyError("tenant not found")
         return tenant
 
+    def list_tenants(self) -> list[dict[str, Any]]:
+        """All registered tenants (used by the autonomy maintenance loop)."""
+        return list(self._directory()["tenants"].values())
+
     def usage_key(self, tenant_id: str) -> str:
         return f"usage:{tenant_id}:{time.strftime('%Y-%m-%d')}"
 
