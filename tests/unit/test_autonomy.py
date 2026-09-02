@@ -350,7 +350,7 @@ def test_intent_router_custom_binding(tmp_path, monkeypatch: pytest.MonkeyPatch)
     assert body["result"] == {"echo": "hi"}
 
     # Handler that raises → error event.
-    def boom(_p: dict) -> None:
+    def boom(_p: dict, _ctx: dict) -> None:
         raise ValueError("kaput")
 
     get_router().register("test.boom", boom)
