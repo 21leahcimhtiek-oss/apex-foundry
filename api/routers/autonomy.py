@@ -12,6 +12,8 @@ from fastapi import APIRouter, Depends
 from api.routers.auth import get_current_user, get_service
 from api.routers.memory import get_vault
 from api.schemas.models import (
+    AutonomyDispatchRequest,
+    AutonomyDispatchResponse,
     AutonomyMetricsResponse,
     AutonomyPruneRequest,
     AutonomyPruneResponse,
@@ -19,6 +21,7 @@ from api.schemas.models import (
     AutonomyTickResponse,
 )
 from core.autonomy.engine import AutonomyEngine
+from core.autonomy.intent import IntentRouter
 from core.kernel.memory.store import SQLiteStore
 
 router = APIRouter(prefix="/v1/autonomy", tags=["autonomy"])
@@ -76,3 +79,44 @@ def autonomy_prune(
 @router.get("/metrics", response_model=AutonomyMetricsResponse)
 def autonomy_metrics(user: dict = Depends(get_current_user)) -> AutonomyMetricsResponse:
     return AutonomyMetricsResponse(**get_engine().metrics(user["tenant_id"]))
+
+
+def get_router() -> IntentRouter:
+    """Intent Router with default capability bindings (cached singleton)."""
+    global _intent_router
+    if _intent_router is None:
+        _intent_router = IntentRouter(get_engine())
+        _intent_router.install_defaults()
+    return _intent_router
+
+
+_intent_router: IntentRouter | None = None
+
+
+def _dispatch_target(user: dict) -> dict:
+    return {"tenant_id": user["tenant_id"], "plan": _plan(user)}
+
+
+@router.post("/dispatch", response_model=AutonomyDispatchResponse)
+def autonomy_dispatch(
+    req: AutonomyDispatchRequest, user: dict = Depends(get_current_user)
+) -> AutonomyDispatchResponse:
+    _metered(user)
+    target = _dispatch_target(user)
+    outcome = get_router().dispatch(
+        target["tenant_id"], target["plan"], req.agent, req.intent, req.payload
+    )
+    return AutonomyDispatchResponse(**outcome)
+
+
+@router.get("/events")
+def autonomy_events(
+    status: str | None = None,
+    limit: int = 50,
+    user: dict = Depends(get_current_user),
+) -> list:
+    _metered(user)
+    return [
+        r.model_dump()
+        for r in get_router().events(user["tenant_id"], status=status, limit=limit)
+    ]

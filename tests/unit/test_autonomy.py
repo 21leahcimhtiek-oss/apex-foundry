@@ -278,3 +278,83 @@ def test_scheduler_run_once_prunes_all_tenants(
     with TestClient(create_app()) as c:
         assert c.app.state.autonomy_scheduler is not None
         assert c.app.state.autonomy_scheduler.interval_hours >= 1 / 60
+
+
+def test_intent_router_dispatch_and_event_stream(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client = _autonomy_client(tmp_path, monkeypatch)
+    tok = _register_and_login(client, "router@t.test")
+    headers = {"Authorization": f"Bearer {tok}"}
+    assert client.post(
+        "/v1/autonomy/dispatch", json={"agent": "a", "intent": "memory.prune"}
+    ).status_code == 401
+
+    # Built-in intent routes and records an ok event.
+    resp = client.post(
+        "/v1/autonomy/dispatch",
+        json={"agent": "worker", "intent": "memory.prune", "payload": {"max_age_hours": 1}},
+        headers=headers,
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "ok" and body["event_id"].startswith("mem_")
+    assert body["result"]["kept"] == 0
+
+    # system.status works too.
+    ok2 = client.post(
+        "/v1/autonomy/dispatch",
+        json={"agent": "worker", "intent": "system.status"},
+        headers=headers,
+    ).json()
+    assert ok2["status"] == "ok" and "memory.prune" in ok2["result"]["intents"]
+
+    # Unknown intent → error event, not a crash.
+    bad = client.post(
+        "/v1/autonomy/dispatch",
+        json={"agent": "worker", "intent": "does.not.exist"},
+        headers=headers,
+    ).json()
+    assert bad["status"] == "error" and "unknown intent" in bad["result"]["detail"]
+
+    # Event stream: newest first, filterable by status, tenant-scoped.
+    events = client.get("/v1/autonomy/events", headers=headers).json()
+    assert len(events) == 3
+    assert events[0]["created_at"] >= events[-1]["created_at"]
+    errs = client.get(
+        "/v1/autonomy/events", params={"status": "error"}, headers=headers
+    ).json()
+    assert len(errs) == 1 and "does.not.exist" in errs[0]["content"]
+
+    tok_b = _register_and_login(client, "router-b@t.test")
+    assert client.get(
+        "/v1/autonomy/events", headers={"Authorization": f"Bearer {tok_b}"}
+    ).json() == []
+
+
+def test_intent_router_custom_binding(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    client = _autonomy_client(tmp_path, monkeypatch)
+    tok = _register_and_login(client, "custom@t.test")
+    headers = {"Authorization": f"Bearer {tok}"}
+
+    from api.routers.autonomy import get_router
+
+    get_router().register("test.echo", lambda p: {"echo": p.get("msg", "")})
+    body = client.post(
+        "/v1/autonomy/dispatch",
+        json={"agent": "x", "intent": "test.echo", "payload": {"msg": "hi"}},
+        headers=headers,
+    ).json()
+    assert body["status"] == "ok" and body["result"] == {"echo": "hi"}
+
+    # Handler that raises → error event.
+    def boom(_p: dict) -> None:
+        raise ValueError("kaput")
+
+    get_router().register("test.boom", boom)
+    body = client.post(
+        "/v1/autonomy/dispatch",
+        json={"agent": "x", "intent": "test.boom"},
+        headers=headers,
+    ).json()
+    assert body["status"] == "error" and "kaput" in body["result"]["detail"]

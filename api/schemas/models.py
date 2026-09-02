@@ -70,6 +70,20 @@ class AutonomyMetricsResponse(BaseModel):
     seconds_since_last_record: int | None
 
 
+class AutonomyDispatchRequest(BaseModel):
+    agent: str = Field(min_length=1, max_length=128)
+    intent: str = Field(min_length=1, max_length=128)
+    payload: dict = {}
+
+
+class AutonomyDispatchResponse(BaseModel):
+    intent: str
+    status: str
+    result: object
+    event_id: str
+    dispatched_at: int
+
+
 class Plan(BaseModel):
     name: str
     price_monthly: int
