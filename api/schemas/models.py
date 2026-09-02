@@ -37,6 +37,27 @@ class MemoryRecord(BaseModel):
     created_at: int
 
 
+class AutonomyTickRequest(BaseModel):
+    agent: str = Field(min_length=1, max_length=128)
+    goal: str = Field(min_length=1, max_length=2_000)
+    outcome: str = Field(default="", max_length=32_000)
+
+
+class AutonomyTickResponse(BaseModel):
+    recalled: list[MemoryRecord]
+    recorded: MemoryRecord
+
+
+class AutonomyPruneRequest(BaseModel):
+    max_age_hours: float = Field(default=24 * 30, gt=0, le=24 * 365)
+    keep_recent: int = Field(default=10, ge=0, le=200)
+
+
+class AutonomyPruneResponse(BaseModel):
+    deleted: list[str]
+    kept: int
+
+
 class Plan(BaseModel):
     name: str
     price_monthly: int
