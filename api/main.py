@@ -23,7 +23,7 @@ def _load_env() -> None:
 
 _load_env()
 
-from api.routers import agents, auth, billing, chat, health
+from api.routers import agents, auth, billing, chat, health, memory
 from core.agents.factory.blueprint import registry
 
 BLUEPRINTS_DIR = Path(__file__).resolve().parent.parent / "blueprints"
@@ -47,6 +47,7 @@ def create_app() -> FastAPI:
     app.include_router(agents.router)
     app.include_router(chat.router)
     app.include_router(billing.router)
+    app.include_router(memory.router)
     return app
 
 

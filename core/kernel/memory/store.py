@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
+from pathlib import Path
 from typing import Any, Protocol
 
 
@@ -65,6 +67,50 @@ class RedisStore:
         return sorted(
             k.decode().removeprefix(self._prefix)
             for k in self._client.keys(f"{self._prefix}*")
+        )
+
+
+class SQLiteStore:
+    """SQLite-backed persistent key/value store (stdlib sqlite3).
+
+    Used where durable, file-backed storage is needed without a server
+    (e.g. the Memory Vault). Single file, WAL mode, per-tenant keys.
+    """
+
+    def __init__(self, path: str | None = None) -> None:
+        self._path = path or os.getenv(
+            "APEX_SQLITE_PATH",
+            str(Path(__file__).resolve().parents[3] / "data" / "apex.db"),
+        )
+        Path(self._path).parent.mkdir(parents=True, exist_ok=True)
+        self._conn = sqlite3.connect(self._path, check_same_thread=False)
+        self._conn.execute(
+            "CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL)"
+        )
+        self._conn.execute("PRAGMA journal_mode=WAL")
+        self._conn.commit()
+
+    def get(self, key: str) -> Any:
+        row = self._conn.execute(
+            "SELECT value FROM kv WHERE key = ?", (key,)
+        ).fetchone()
+        return json.loads(row[0]) if row is not None else None
+
+    def set(self, key: str, value: Any) -> None:
+        self._conn.execute(
+            "INSERT INTO kv (key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (key, json.dumps(value, default=str)),
+        )
+        self._conn.commit()
+
+    def delete(self, key: str) -> None:
+        self._conn.execute("DELETE FROM kv WHERE key = ?", (key,))
+        self._conn.commit()
+
+    def keys(self) -> list[str]:
+        return sorted(
+            row[0] for row in self._conn.execute("SELECT key FROM kv").fetchall()
         )
 
 

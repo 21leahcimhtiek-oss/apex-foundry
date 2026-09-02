@@ -24,6 +24,19 @@ class AgentInfo(BaseModel):
     tags: list[str] = []
 
 
+class MemoryCreate(BaseModel):
+    content: str = Field(min_length=1, max_length=64_000)
+    tags: list[str] = []
+
+
+class MemoryRecord(BaseModel):
+    memory_id: str
+    tenant_id: str
+    content: str
+    tags: list[str]
+    created_at: int
+
+
 class Plan(BaseModel):
     name: str
     price_monthly: int

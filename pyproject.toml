@@ -20,6 +20,7 @@ dependencies = [
     "redis>=5.0",
     "openai>=1.30",
     "pyjwt>=2.8",
+    "python-multipart>=0.0.9",
 ]
 
 [project.optional-dependencies]
