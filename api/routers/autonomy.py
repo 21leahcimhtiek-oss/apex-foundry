@@ -12,12 +12,14 @@ from fastapi import APIRouter, Depends
 from api.routers.auth import get_current_user, get_service
 from api.routers.memory import get_vault
 from api.schemas.models import (
+    AutonomyMetricsResponse,
     AutonomyPruneRequest,
     AutonomyPruneResponse,
     AutonomyTickRequest,
     AutonomyTickResponse,
 )
 from core.autonomy.engine import AutonomyEngine
+from core.kernel.memory.store import SQLiteStore
 
 router = APIRouter(prefix="/v1/autonomy", tags=["autonomy"])
 
@@ -27,7 +29,7 @@ _engine: AutonomyEngine | None = None
 def get_engine() -> AutonomyEngine:
     global _engine
     if _engine is None:
-        _engine = AutonomyEngine(get_vault())
+        _engine = AutonomyEngine(get_vault(), SQLiteStore())
     return _engine
 
 
@@ -50,7 +52,12 @@ def autonomy_tick(
 ) -> AutonomyTickResponse:
     _metered(user)
     recalled, recorded = get_engine().cycle(
-        user["tenant_id"], _plan(user), req.agent, req.goal, req.outcome
+        user["tenant_id"],
+        _plan(user),
+        req.agent,
+        req.goal,
+        req.outcome,
+        recall_agent_scoped=req.recall_agent_scoped,
     )
     return AutonomyTickResponse(recalled=recalled, recorded=recorded)
 
@@ -64,3 +71,8 @@ def autonomy_prune(
         user["tenant_id"], _plan(user), req.max_age_hours, req.keep_recent
     )
     return AutonomyPruneResponse(deleted=deleted, kept=kept)
+
+
+@router.get("/metrics", response_model=AutonomyMetricsResponse)
+def autonomy_metrics(user: dict = Depends(get_current_user)) -> AutonomyMetricsResponse:
+    return AutonomyMetricsResponse(**get_engine().metrics(user["tenant_id"]))

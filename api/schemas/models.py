@@ -41,6 +41,7 @@ class AutonomyTickRequest(BaseModel):
     agent: str = Field(min_length=1, max_length=128)
     goal: str = Field(min_length=1, max_length=2_000)
     outcome: str = Field(default="", max_length=32_000)
+    recall_agent_scoped: bool = True
 
 
 class AutonomyTickResponse(BaseModel):
@@ -56,6 +57,17 @@ class AutonomyPruneRequest(BaseModel):
 class AutonomyPruneResponse(BaseModel):
     deleted: list[str]
     kept: int
+
+
+class AutonomyMetricsResponse(BaseModel):
+    total_records: int
+    records_in_vault: int
+    prune_runs: int
+    records_pruned: int
+    recall_queries: int
+    recall_hit_rate: float | None
+    by_agent: dict[str, int]
+    seconds_since_last_record: int | None
 
 
 class Plan(BaseModel):

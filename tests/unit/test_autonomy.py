@@ -17,6 +17,7 @@ def _register_and_login(client: TestClient, email: str) -> str:
 
 def _autonomy_client(tmp_path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     monkeypatch.setenv("APEX_MEMORY_DB", str(tmp_path / "memory_vault.db"))
+    monkeypatch.setenv("APEX_SQLITE_PATH", str(tmp_path / "metrics.db"))
     import api.routers.memory as mem
     import api.routers.autonomy as auto
 
@@ -143,3 +144,92 @@ def test_prune_keep_recent_protects_old_records(
         headers=headers,
     ).json()
     assert resp["deleted"] == [] and resp["kept"] == 1
+
+
+def test_recall_agent_scoping(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    client = _autonomy_client(tmp_path, monkeypatch)
+    tok = _register_and_login(client, "scope@t.test")
+    headers = {"Authorization": f"Bearer {tok}"}
+
+    # Agent A records a memory about "stripe webhook notes".
+    client.post(
+        "/v1/autonomy/tick",
+        json={"agent": "alpha", "goal": "research stripe webhook notes", "outcome": "ok"},
+        headers=headers,
+    )
+
+    # Agent B, scoped (default), recalls nothing of its own — no shared history.
+    b_scoped = client.post(
+        "/v1/autonomy/tick",
+        json={"agent": "beta", "goal": "check stripe webhook"},
+        headers=headers,
+    ).json()
+    assert b_scoped["recalled"] == []
+
+    # With recall_agent_scoped=False, B sees A's record.
+    b_shared = client.post(
+        "/v1/autonomy/tick",
+        json={
+            "agent": "beta",
+            "goal": "check stripe webhook",
+            "recall_agent_scoped": False,
+        },
+        headers=headers,
+    ).json()
+    # B recalls A's record plus its own earlier tick's record.
+    assert any(r["content"].startswith("[alpha]") for r in b_shared["recalled"])
+
+
+def test_record_tags_goal_keywords_and_cycle(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    client = _autonomy_client(tmp_path, monkeypatch)
+    tok = _register_and_login(client, "tags@t.test")
+    headers = {"Authorization": f"Bearer {tok}"}
+    rec = client.post(
+        "/v1/autonomy/tick",
+        json={"agent": "scout", "goal": "audit stripe webhook", "outcome": "done"},
+        headers=headers,
+    ).json()["recorded"]
+    assert "goal:audit" in rec["tags"]
+    assert "goal:stripe" in rec["tags"]
+    assert any(t.startswith("cycle:") for t in rec["tags"])
+
+    # Tag-based recall finds it without substring matching content.
+    hits = client.get(
+        "/v1/memory", params={"tag": "goal:stripe"}, headers=headers
+    ).json()
+    assert len(hits) == 1
+
+
+def test_autonomy_metrics(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    client = _autonomy_client(tmp_path, monkeypatch)
+    tok = _register_and_login(client, "metrics@t.test")
+    headers = {"Authorization": f"Bearer {tok}"}
+    client.post(
+        "/v1/autonomy/tick",
+        json={"agent": "alpha", "goal": "research stripe webhook notes", "outcome": "ok"},
+        headers=headers,
+    )
+    client.post(
+        "/v1/autonomy/tick",
+        json={"agent": "alpha", "goal": "check stripe webhook", "outcome": "fine"},
+        headers=headers,
+    )
+
+    m = client.get("/v1/autonomy/metrics", headers=headers).json()
+    assert m["records_in_vault"] == 2
+    assert m["by_agent"] == {"alpha": 2}
+    assert m["recall_queries"] >= 2
+    assert m["recall_hit_rate"] is not None and m["recall_hit_rate"] > 0
+    assert m["prune_runs"] == 0
+    assert m["seconds_since_last_record"] is not None
+
+    # Prune bumps counters; tenant isolation — another tenant sees zeros.
+    client.post("/v1/autonomy/prune", json={"max_age_hours": 1}, headers=headers)
+    m2 = client.get("/v1/autonomy/metrics", headers=headers).json()
+    assert m2["prune_runs"] == 1
+
+    tok_b = _register_and_login(client, "metrics-b@t.test")
+    m3 = client.get(
+        "/v1/autonomy/metrics", headers={"Authorization": f"Bearer {tok_b}"}
+    ).json()
+    assert m3["records_in_vault"] == 0 and m3["recall_queries"] == 0
