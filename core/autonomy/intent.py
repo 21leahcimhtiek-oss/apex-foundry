@@ -104,10 +104,12 @@ class IntentRouter:
     # -- built-in capability bindings ----------------------------------------
     def install_defaults(self) -> None:
         """Bind the platform's own capabilities as routable intents."""
-        self.register("memory.prune", lambda p, ctx: self.engine.prune(
+        self.register("memory.prune", lambda p, ctx: (lambda r: {
+            "deleted": r[0], "kept": r[1],
+        })(self.engine.prune(
             ctx["tenant_id"], ctx.get("plan", "free"),
             p.get("max_age_hours", 24 * 30), p.get("keep_recent", 10),
-        ))
+        )))
         self.register("memory.recall", lambda p, ctx: [
             r.model_dump() for r in self.engine.recall(
                 ctx["tenant_id"], p.get("goal", ""),

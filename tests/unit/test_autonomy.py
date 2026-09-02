@@ -23,6 +23,7 @@ def _autonomy_client(tmp_path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
 
     mem._vault = None
     auto._engine = None
+    auto._intent_router = None
     return TestClient(create_app())
 
 
